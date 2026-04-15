@@ -1,8 +1,15 @@
 const jwt  = require('jsonwebtoken');
 const User = require('../models/User');
 
+const getJwtSecret = () => {
+  if (!process.env.JWT_SECRET) {
+    throw new Error('Server misconfiguration: JWT_SECRET is missing');
+  }
+  return process.env.JWT_SECRET;
+};
+
 const generateToken = (id) =>
-  jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRE });
+  jwt.sign({ id }, getJwtSecret(), { expiresIn: process.env.JWT_EXPIRE || '30d' });
 
 // Register
 exports.register = async (req, res) => {
