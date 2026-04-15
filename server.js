@@ -8,6 +8,7 @@ require('dotenv').config();
 const authRoutes      = require('./src/routes/authRoutes');
 const classRoutes     = require('./src/routes/classRoutes');
 const recordingRoutes = require('./src/routes/recordingRoutes');
+const livekitRoutes   = require('./src/routes/livekitRoutes');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 5001;
@@ -25,6 +26,7 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.use('/api/auth',       authRoutes);
 app.use('/api/classes',    classRoutes);
 app.use('/api/recordings', recordingRoutes);
+app.use('/api/livekit',    livekitRoutes);
 
 // Health check
 app.get('/', (req, res) => {
