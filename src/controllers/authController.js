@@ -2,10 +2,11 @@ const jwt  = require('jsonwebtoken');
 const User = require('../models/User');
 
 const getJwtSecret = () => {
-  if (!process.env.JWT_SECRET) {
+  const secret = (process.env.JWT_SECRET || '').trim();
+  if (!secret) {
     throw new Error('Server misconfiguration: JWT_SECRET is missing');
   }
-  return process.env.JWT_SECRET;
+  return secret;
 };
 
 const generateToken = (id) =>
