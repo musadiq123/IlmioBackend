@@ -9,3 +9,4 @@ yarn-error.log*
 
 # Firebase service account credentials
 src/config/firebase-service-account.json
+
