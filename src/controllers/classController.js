@@ -193,11 +193,14 @@ exports.toggleRecording = async (req, res) => {
   }
 };
 
-// Get student's joined classes
+// Get student's joined/invited classes
 exports.getJoinedClasses = async (req, res) => {
   try {
-    const classes = await Class.find({ students: req.user._id })
-      .populate('teacher', 'name');
+    const classes = await Class.find({
+      $or: [{ students: req.user._id }, { studentIds: req.user._id }],
+    })
+      .populate('teacher', 'name')
+      .sort({ scheduledAt: -1 });
     res.json(classes);
   } catch (err) {
     res.status(500).json({ message: err.message });
