@@ -9,6 +9,10 @@ const {
   endClass,
   toggleRecording,
   getJoinedClasses,
+  getLiveClasses,
+  getLiveClassesCount,
+  getTeacherClasses,
+  joinLiveClass,
 } = require('../controllers/classController');
 
 /**
@@ -32,12 +36,19 @@ const {
  *         application/json:
  *           schema:
  *             type: object
- *             required: [name, subject]
+ *             required: [name, subject, scheduledAt]
  *             properties:
  *               name:             { type: string, example: English Speaking A1 }
  *               subject:          { type: string, example: English }
  *               description:      { type: string, example: Beginner level class }
  *               recordingEnabled: { type: boolean, example: true }
+ *               scheduledAt:      { type: string, format: date-time, example: "2026-05-15T10:00:00Z" }
+ *               startTime:        { type: string, example: "10:00" }
+ *               endTime:          { type: string, example: "11:00" }
+ *               duration:         { type: string, example: "1 hour" }
+ *               repeatDaily:      { type: boolean, example: false }
+ *               groupName:        { type: string, example: "Advanced Learners" }
+ *               studentIds:       { type: array, items: { type: string }, example: ["60d5ec49c1234567890abcde"] }
  *     responses:
  *       201:
  *         description: Class created
@@ -45,6 +56,8 @@ const {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Class'
+ *       400:
+ *         description: Missing required fields
  *       401:
  *         description: Unauthorized
  */
@@ -94,7 +107,7 @@ router.get('/joined', auth, getJoinedClasses);
  * @swagger
  * /api/classes/join:
  *   post:
- *     summary: Student joins a class using class code
+ *     summary: Student joins a class (invite-only - student must be in studentIds)
  *     tags: [Classes]
  *     security:
  *       - bearerAuth: []
@@ -114,10 +127,103 @@ router.get('/joined', auth, getJoinedClasses);
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Class'
+ *       403:
+ *         description: Student not invited to this class
  *       404:
  *         description: Class not found
  */
 router.post('/join', auth, joinClass);
+
+/**
+ * @swagger
+ * /api/classes/live/list:
+ *   get:
+ *     summary: Get all live classes (for teacher dashboard)
+ *     tags: [Classes]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: List of live classes
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/Class'
+ */
+router.get('/live/list', auth, getLiveClasses);
+
+/**
+ * @swagger
+ * /api/classes/live/count:
+ *   get:
+ *     summary: Get total count of live classes
+ *     tags: [Classes]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Live classes count
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 liveClassesCount: { type: integer, example: 5 }
+ */
+router.get('/live/count', auth, getLiveClassesCount);
+
+/**
+ * @swagger
+ * /api/classes/live/join:
+ *   post:
+ *     summary: Teacher joins a live class
+ *     tags: [Classes]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [classCode]
+ *             properties:
+ *               classCode: { type: string, example: ESB-4829 }
+ *     responses:
+ *       200:
+ *         description: Joined live class successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Class'
+ *       403:
+ *         description: Only teachers can access, or class is not live
+ *       404:
+ *         description: Class not found
+ */
+router.post('/live/join', auth, joinLiveClass);
+
+/**
+ * @swagger
+ * /api/classes/teacher/all:
+ *   get:
+ *     summary: Get all classes created by the logged-in teacher (with full details)
+ *     tags: [Classes]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: List of teacher classes
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/Class'
+ */
+router.get('/teacher/all', auth, getTeacherClasses);
 
 /**
  * @swagger

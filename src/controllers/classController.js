@@ -12,7 +12,27 @@ const generateClassId = () => {
 // Create class (teacher only)
 exports.createClass = async (req, res) => {
   try {
-    const { name, subject, description, recordingEnabled } = req.body;
+    const {
+      name,
+      subject,
+      description,
+      recordingEnabled,
+      scheduledAt,
+      startTime,
+      endTime,
+      duration,
+      repeatDaily,
+      groupName,
+      studentIds,
+    } = req.body;
+
+    // Validate required fields
+    if (!name || !subject || !scheduledAt) {
+      return res.status(400).json({
+        message: 'Missing required fields: name, subject, scheduledAt',
+      });
+    }
+
     let classId = generateClassId();
 
     // Make sure classId is unique
@@ -24,7 +44,14 @@ exports.createClass = async (req, res) => {
       name,
       subject,
       description,
-      recordingEnabled,
+      recordingEnabled: recordingEnabled !== false,
+      scheduledAt: new Date(scheduledAt),
+      startTime,
+      endTime,
+      duration,
+      repeatDaily: repeatDaily || false,
+      groupName,
+      studentIds: studentIds || [],
       classId,
       teacher: req.user._id,
     });
@@ -46,16 +73,55 @@ exports.getMyClasses = async (req, res) => {
   }
 };
 
-// Student joins class
+// Student joins class (invite-only access)
 exports.joinClass = async (req, res) => {
   try {
+    // Verify requester is a student
+    if (req.user.role !== 'student') {
+      return res.status(403).json({
+        message: 'Only students can join classes',
+      });
+    }
+
     const { classCode } = req.body;
     const cls = await Class.findOne({ classId: classCode })
-      .populate('teacher', 'name');
+      .populate('teacher', 'name')
+      .populate('studentIds', 'name email');
 
-    if (!cls) return res.status(404).json({ message: 'Class not found' });
+    if (!cls) {
+      return res.status(404).json({ message: 'Class not found' });
+    }
 
-    // Add student if not already joined
+    // Check class status - must be scheduled or live
+    if (!['scheduled', 'live'].includes(cls.status)) {
+      return res.status(403).json({
+        message: 'Cannot join class with this status',
+      });
+    }
+
+    // Validate student is invited
+    const isInvited = cls.studentIds.some(
+      (sid) => sid._id.toString() === req.user._id.toString()
+    );
+
+    // TODO: Check group membership when groupName is used
+    // const belongsToGroup = await checkGroupMembership(req.user._id, cls.groupName);
+    // const hasAccess = isInvited || (cls.groupName && belongsToGroup);
+
+    if (!isInvited && cls.groupName) {
+      // If groupName is set but student not in studentIds, they need group membership
+      return res.status(403).json({
+        message: 'Student not invited to this class',
+      });
+    }
+
+    if (!isInvited && !cls.groupName) {
+      return res.status(403).json({
+        message: 'Student not invited to this class',
+      });
+    }
+
+    // Add student if not already in students array
     if (!cls.students.includes(req.user._id)) {
       cls.students.push(req.user._id);
       await cls.save();
@@ -133,6 +199,77 @@ exports.getJoinedClasses = async (req, res) => {
     const classes = await Class.find({ students: req.user._id })
       .populate('teacher', 'name');
     res.json(classes);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// Get all live classes (for teacher dashboard)
+exports.getLiveClasses = async (req, res) => {
+  try {
+    const liveClasses = await Class.find({ status: 'live' })
+      .populate('teacher', 'name subject')
+      .populate('students', 'name')
+      .select(
+        'name subject teacher status scheduledAt startTime endTime duration students studentIds groupName'
+      );
+    res.json(liveClasses);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// Get count of live classes
+exports.getLiveClassesCount = async (req, res) => {
+  try {
+    const count = await Class.countDocuments({ status: 'live' });
+    res.json({ liveClassesCount: count });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// Get all teacher's classes (created by this teacher)
+exports.getTeacherClasses = async (req, res) => {
+  try {
+    const classes = await Class.find({ teacher: req.user._id })
+      .populate('students', 'name email')
+      .populate('studentIds', 'name email')
+      .sort({ scheduledAt: -1 });
+    res.json(classes);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// Teacher joins a live class
+exports.joinLiveClass = async (req, res) => {
+  try {
+    // Verify requester is a teacher
+    if (req.user.role !== 'teacher') {
+      return res.status(403).json({
+        message: 'Only teachers can access this endpoint',
+      });
+    }
+
+    const { classCode } = req.body;
+    const cls = await Class.findOne({ classId: classCode })
+      .populate('teacher', 'name')
+      .populate('students', 'name')
+      .populate('studentIds', 'name');
+
+    if (!cls) {
+      return res.status(404).json({ message: 'Class not found' });
+    }
+
+    // Any teacher can join a live class
+    if (cls.status !== 'live') {
+      return res.status(403).json({
+        message: 'Class is not live',
+      });
+    }
+
+    res.json(cls);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

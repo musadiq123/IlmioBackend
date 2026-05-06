@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const auth = require('../middleware/authMiddleware');
-const { register, login, getProfile } = require('../controllers/authController');
+const { register, login, getProfile, getAllStudents } = require('../controllers/authController');
 
 /**
  * @swagger
@@ -102,5 +102,45 @@ router.post('/login', login);
  *               $ref: '#/components/schemas/Error'
  */
 router.get('/me', auth, getProfile);
+
+/**
+ * @swagger
+ * /api/auth/students:
+ *   get:
+ *     summary: Get all students (teacher only)
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: List of all students
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   _id:        { type: string, example: "60d5ec49c1234567890abcde" }
+ *                   name:       { type: string, example: "Ahmad Ali" }
+ *                   email:      { type: string, example: "ahmad@test.com" }
+ *                   phone:      { type: string, example: "+923001234567" }
+ *                   avatar:     { type: string, example: "https://example.com/avatar.jpg" }
+ *                   subject:    { type: string, example: "English Speaking" }
+ *                   createdAt:  { type: string, format: date-time }
+ *       403:
+ *         description: Only teachers can access student list
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized – no or invalid token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.get('/students', auth, getAllStudents);
 
 module.exports = router;
