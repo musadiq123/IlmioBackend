@@ -6,3 +6,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .DS_Store
+
+# Firebase service account credentials
+src/config/firebase-service-account.json
