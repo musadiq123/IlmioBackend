@@ -1,8 +1,12 @@
-const router = require('express').Router();
+const express = require('express');
+const router = express.Router();
 const auth   = require('../middleware/authMiddleware');
 const {
   requestUpload,
   completeUpload,
+  startLivekitRecording,
+  stopLivekitRecording,
+  livekitWebhook,
   listByClass,
   getPlaybackUrl,
   archiveRecording,
@@ -20,10 +24,10 @@ const {
  * @swagger
  * /api/recordings/request-upload:
  *   post:
- *     summary: Request a signed Cloudinary upload URL (teacher only)
+ *     summary: Request a signed Firebase Storage upload URL (teacher only)
  *     description: >
  *       Returns signed upload parameters. The client uses these to upload
- *       the video file directly to Cloudinary (never goes through your server).
+ *       the video file directly to Firebase Storage (never goes through your server).
  *       After upload succeeds call POST /api/recordings/:id/complete.
  *     tags: [Recordings]
  *     security:
@@ -71,8 +75,8 @@ router.post('/request-upload', auth, requestUpload);
  * @swagger
  * /api/recordings/{id}/complete:
  *   post:
- *     summary: Mark recording upload as complete with Cloudinary metadata
- *     description: Call this after Cloudinary confirms the upload. Saves playback URL and marks status as ready.
+ *     summary: Mark recording upload as complete with Firebase metadata
+ *     description: Call this after Firebase Storage upload completes. If a temp file exists on server, uploads it to Firebase. Otherwise saves the provided playback URL and marks status as ready.
  *     tags: [Recordings]
  *     security:
  *       - bearerAuth: []
@@ -90,7 +94,7 @@ router.post('/request-upload', auth, requestUpload);
  *             type: object
  *             required: [playbackUrl]
  *             properties:
- *               playbackUrl:  { type: string, example: "https://res.cloudinary.com/..." }
+ *               playbackUrl:  { type: string, example: "https://firebasestorage.googleapis.com/..." }
  *               durationSec:  { type: number, example: 3600 }
  *               sizeBytes:    { type: number, example: 524288000 }
  *               mimeType:     { type: string, example: video/mp4 }
@@ -109,6 +113,23 @@ router.post('/request-upload', auth, requestUpload);
  *         description: Recording not in uploading state
  */
 router.post('/:id/complete', auth, completeUpload);
+
+// LiveKit egress start aliases
+router.post('/livekit/start', auth, startLivekitRecording);
+router.post('/start-livekit', auth, startLivekitRecording);
+router.post('/egress/start', auth, startLivekitRecording);
+
+// LiveKit egress stop aliases
+router.post('/livekit/stop', auth, stopLivekitRecording);
+router.post('/stop-livekit', auth, stopLivekitRecording);
+router.post('/egress/stop', auth, stopLivekitRecording);
+
+// LiveKit webhook finalization (raw body required for signature validation)
+router.post(
+  '/livekit/webhook',
+  express.raw({ type: ['application/webhook+json', 'application/json'] }),
+  livekitWebhook
+);
 
 /**
  * @swagger
@@ -203,7 +224,7 @@ router.patch('/:id/archive', auth, archiveRecording);
  * /api/recordings/{id}:
  *   delete:
  *     summary: Delete a recording (teacher only)
- *     description: Soft-deletes the recording in DB and removes the video from Cloudinary.
+ *     description: Soft-deletes the recording in DB and removes the video from Firebase Storage.
  *     tags: [Recordings]
  *     security:
  *       - bearerAuth: []

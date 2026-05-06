@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('./src/config/swagger');
+const admin = require('firebase-admin');
 require('dotenv').config();
 
 const authRoutes      = require('./src/routes/authRoutes');
@@ -15,6 +16,20 @@ const missingEnvVars = requiredEnvVars.filter((name) => !process.env[name]);
 if (missingEnvVars.length > 0) {
   console.error(`❌ Missing required environment variables: ${missingEnvVars.join(', ')}`);
   process.exit(1);
+}
+
+// Initialize Firebase Admin SDK
+const serviceAccount = require('./src/config/firebase-service-account.json');
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET, // e.g., 'your-project.appspot.com'
+});
+
+// Ensure temp recordings directory exists
+const fs = require('fs');
+const tempRecordingsDir = '/tmp/recordings';
+if (!fs.existsSync(tempRecordingsDir)) {
+  fs.mkdirSync(tempRecordingsDir, { recursive: true });
 }
 
 const app = express();
