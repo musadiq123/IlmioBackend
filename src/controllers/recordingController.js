@@ -130,11 +130,38 @@ exports.requestUpload = async (req, res) => {
       });
     }
 
+    // Validate Firebase Admin SDK is initialized
+    try {
+      const bucket = admin.storage().bucket();
+      if (!bucket) {
+        return res.status(500).json({
+          code: 'FIREBASE_NOT_INITIALIZED',
+          message: 'Firebase Admin SDK not properly initialized. Check FIREBASE_STORAGE_BUCKET and service account.',
+          detail: process.env.NODE_ENV === 'development' ? `Bucket: ${process.env.FIREBASE_STORAGE_BUCKET}` : undefined,
+        });
+      }
+    } catch (bucketErr) {
+      console.error('[requestUpload] Firebase bucket error:', bucketErr.message);
+      return res.status(500).json({
+        code: 'FIREBASE_INIT_ERROR',
+        message: 'Firebase initialization failed. Check your service account JSON is valid.',
+        detail: process.env.NODE_ENV === 'development' ? bucketErr.message : undefined,
+      });
+    }
+
     const { classId } = req.body;
     if (!classId) return res.status(400).json({ message: 'classId is required' });
 
     const cls = await Class.findById(classId);
     if (!cls) return res.status(404).json({ message: 'Class not found' });
+
+    if (!cls.classId || !cls.name) {
+      console.error('[requestUpload] Invalid class data:', { classId, cls });
+      return res.status(500).json({
+        message: 'Class data is incomplete or corrupted',
+        code: 'INVALID_CLASS_DATA',
+      });
+    }
 
     if (cls.teacher.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'Only the class teacher can upload recordings' });
@@ -177,7 +204,18 @@ exports.requestUpload = async (req, res) => {
       },
     });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error('[requestUpload] ERROR:', {
+      message: err.message,
+      stack: err.stack,
+      code: err.code,
+      timestamp: new Date().toISOString(),
+    });
+
+    res.status(500).json({
+      message: 'Failed to request upload',
+      code: err.code || 'UNKNOWN_ERROR',
+      detail: process.env.NODE_ENV === 'development' ? err.message : undefined,
+    });
   }
 };
 
@@ -254,7 +292,18 @@ exports.completeUpload = async (req, res) => {
 
     res.json(recording);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error('[completeUpload] ERROR:', {
+      message: err.message,
+      stack: err.stack,
+      recordingId: req.params.id,
+      timestamp: new Date().toISOString(),
+    });
+
+    res.status(500).json({
+      message: 'Failed to complete upload',
+      code: err.code || 'UNKNOWN_ERROR',
+      detail: process.env.NODE_ENV === 'development' ? err.message : undefined,
+    });
   }
 };
 
