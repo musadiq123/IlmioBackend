@@ -4,6 +4,8 @@ const cors = require('cors');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('./src/config/swagger');
 const admin = require('firebase-admin');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 const authRoutes      = require('./src/routes/authRoutes');
@@ -11,7 +13,7 @@ const classRoutes     = require('./src/routes/classRoutes');
 const recordingRoutes = require('./src/routes/recordingRoutes');
 const livekitRoutes   = require('./src/routes/livekitRoutes');
 
-const requiredEnvVars = ['MONGODB_URI', 'JWT_SECRET'];
+const requiredEnvVars = ['MONGODB_URI', 'JWT_SECRET', 'FIREBASE_STORAGE_BUCKET'];
 const missingEnvVars = requiredEnvVars.filter((name) => !process.env[name]);
 if (missingEnvVars.length > 0) {
   console.error(`❌ Missing required environment variables: ${missingEnvVars.join(', ')}`);
@@ -19,14 +21,34 @@ if (missingEnvVars.length > 0) {
 }
 
 // Initialize Firebase Admin SDK
-const serviceAccount = require('./src/config/firebase-service-account.json');
+const loadFirebaseServiceAccount = () => {
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    try {
+      return JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+    } catch (err) {
+      console.error('❌ Invalid FIREBASE_SERVICE_ACCOUNT_JSON:', err.message);
+      throw err;
+    }
+  }
+
+  const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || './src/config/firebase-service-account.json';
+  const resolvedPath = path.resolve(serviceAccountPath);
+  if (fs.existsSync(resolvedPath)) {
+    return require(resolvedPath);
+  }
+
+  throw new Error(
+    'Firebase service account not found. Set FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_SERVICE_ACCOUNT_PATH, or ensure src/config/firebase-service-account.json is available.'
+  );
+};
+
+const serviceAccount = loadFirebaseServiceAccount();
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
   storageBucket: process.env.FIREBASE_STORAGE_BUCKET, // e.g., 'your-project.appspot.com'
 });
 
 // Ensure temp recordings directory exists
-const fs = require('fs');
 const tempRecordingsDir = '/tmp/recordings';
 if (!fs.existsSync(tempRecordingsDir)) {
   fs.mkdirSync(tempRecordingsDir, { recursive: true });
