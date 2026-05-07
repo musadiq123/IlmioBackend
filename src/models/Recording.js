@@ -47,6 +47,40 @@ const recordingSchema = new mongoose.Schema({
   },
   archivedAt: { type: Date },
   deletedAt:  { type: Date },
+
+  // ── Enhanced content ──────────────────────────────────────────────────────
+  // Video chapters (timestamps + titles for in-player navigation)
+  chapters: [{
+    title:      { type: String, required: true },
+    startSec:   { type: Number, required: true },  // seconds from start
+    description: { type: String },
+  }],
+
+  // AI-generated transcript (full text + time-coded segments)
+  transcript: {
+    fullText:   { type: String },
+    language:   { type: String, default: 'en' },
+    provider:   { type: String },               // e.g. 'whisper', 'google'
+    segments:   [{
+      startSec:  { type: Number },
+      endSec:    { type: Number },
+      speaker:   { type: String },
+      text:      { type: String },
+    }],
+    generatedAt: { type: Date },
+    status:      { type: String, enum: ['pending', 'processing', 'completed', 'failed'], default: 'pending' },
+  },
+
+  // AI-generated key points / summary
+  summary: {
+    keyPoints:   [{ type: String }],
+    text:        { type: String },
+    generatedAt: { type: Date },
+    status:      { type: String, enum: ['pending', 'processing', 'completed', 'failed'], default: 'pending' },
+  },
+
+  viewCount: { type: Number, default: 0 },
+  // ─────────────────────────────────────────────────────────────────────────
 }, { timestamps: true });
 
 recordingSchema.index({ classId: 1 });

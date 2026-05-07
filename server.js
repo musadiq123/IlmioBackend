@@ -8,10 +8,17 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
-const authRoutes      = require('./src/routes/authRoutes');
-const classRoutes     = require('./src/routes/classRoutes');
-const recordingRoutes = require('./src/routes/recordingRoutes');
-const livekitRoutes   = require('./src/routes/livekitRoutes');
+const authRoutes         = require('./src/routes/authRoutes');
+const classRoutes        = require('./src/routes/classRoutes');
+const recordingRoutes    = require('./src/routes/recordingRoutes');
+const livekitRoutes      = require('./src/routes/livekitRoutes');
+const notificationRoutes = require('./src/routes/notificationRoutes');
+const attendanceRoutes   = require('./src/routes/attendanceRoutes');
+const progressRoutes     = require('./src/routes/progressRoutes');
+const analyticsRoutes    = require('./src/routes/analyticsRoutes');
+const { authRateLimiter, apiRateLimiter } = require('./src/middleware/rateLimiter');
+const integrationRoutes  = require('./src/routes/integrationRoutes');
+const { startReminderScheduler } = require('./src/utils/reminderScheduler');
 
 const requiredEnvVars = ['MONGODB_URI', 'JWT_SECRET', 'FIREBASE_STORAGE_BUCKET'];
 const missingEnvVars = requiredEnvVars.filter((name) => !process.env[name]);
@@ -66,15 +73,34 @@ app.use(express.json());
 // Swagger docs
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
-// Routes
-app.use('/api/auth',       authRoutes);
-app.use('/api/classes',    classRoutes);
-app.use('/api/recordings', recordingRoutes);
-app.use('/api/livekit',    livekitRoutes);
+// Routes  (auth endpoints have a stricter rate limit; all API routes share a general limit)
+app.use('/api/auth',          authRateLimiter, authRoutes);
+app.use('/api/classes',       apiRateLimiter,  classRoutes);
+app.use('/api/recordings',    apiRateLimiter,  recordingRoutes);
+app.use('/api/livekit',       apiRateLimiter,  livekitRoutes);
+app.use('/api/notifications', apiRateLimiter,  notificationRoutes);
+app.use('/api/attendance',    apiRateLimiter,  attendanceRoutes);
+app.use('/api/progress',      apiRateLimiter,  progressRoutes);
+app.use('/api/analytics',     apiRateLimiter,  analyticsRoutes);
+app.use('/api/integrations',  apiRateLimiter,  integrationRoutes);
 
 // Health check
 app.get('/', (req, res) => {
   res.json({ message: 'Ilmio API is running ✅', docs: `${PUBLIC_BASE_URL}/api-docs` });
+});
+
+// Mobile-friendly API version endpoint
+app.get('/api/version', (req, res) => {
+  res.json({ version: '2.0.0', apiBase: '/api', docs: `${PUBLIC_BASE_URL}/api-docs` });
+});
+
+// Global error handler — catches any unhandled errors from route handlers
+app.use((err, req, res, _next) => {
+  console.error('[GlobalError]', err.message);
+  res.status(err.status || 500).json({
+    message: err.message || 'Internal server error',
+    ...(process.env.NODE_ENV === 'development' ? { stack: err.stack } : {}),
+  });
 });
 
 // Connect to MongoDB (dbName forces ilmiodb; without it, URI .../net/? defaults to "test")
@@ -86,6 +112,7 @@ mongoose.connect(mongoUri, { dbName: mongoDbName })
     console.log(`✅ MongoDB connected (database: ${mongoose.connection.name})`);
     app.listen(PORT, HOST, () => {
       console.log(`✅ Server running at ${PUBLIC_BASE_URL} (bound to ${HOST}:${PORT})`);
+      startReminderScheduler();
     });
   })
   .catch(err => console.error('❌ MongoDB error:', err));

@@ -11,6 +11,11 @@ const {
   getPlaybackUrl,
   archiveRecording,
   deleteRecording,
+  updateChapters,
+  requestTranscript,
+  saveTranscript,
+  saveSummary,
+  incrementView,
 } = require('../controllers/recordingController');
 
 /**
@@ -242,5 +247,128 @@ router.patch('/:id/archive', auth, archiveRecording);
  *         description: Recording not found
  */
 router.delete('/:id', auth, deleteRecording);
+
+// ── Enhanced recording routes ──────────────────────────────────────────────
+
+/**
+ * @swagger
+ * /api/recordings/{id}/chapters:
+ *   patch:
+ *     summary: Add or replace video chapters (teacher only)
+ *     tags: [Recordings]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [chapters]
+ *             properties:
+ *               chapters:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     title:       { type: string }
+ *                     startSec:    { type: number }
+ *                     description: { type: string }
+ *     responses:
+ *       200:
+ *         description: Chapters updated
+ */
+router.patch('/:id/chapters', auth, updateChapters);
+
+/**
+ * @swagger
+ * /api/recordings/{id}/transcript/request:
+ *   post:
+ *     summary: Request AI transcript generation for a recording
+ *     tags: [Recordings]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               language: { type: string, default: en }
+ *               provider:  { type: string, default: whisper }
+ *     responses:
+ *       200:
+ *         description: Transcript job queued
+ */
+router.post('/:id/transcript/request', auth, requestTranscript);
+
+/**
+ * @swagger
+ * /api/recordings/{id}/transcript:
+ *   patch:
+ *     summary: Save completed transcript (AI worker callback)
+ *     tags: [Recordings]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Transcript saved
+ */
+router.patch('/:id/transcript', saveTranscript);
+
+/**
+ * @swagger
+ * /api/recordings/{id}/summary:
+ *   patch:
+ *     summary: Save AI-generated summary and key points
+ *     tags: [Recordings]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Summary saved
+ */
+router.patch('/:id/summary', saveSummary);
+
+/**
+ * @swagger
+ * /api/recordings/{id}/view:
+ *   post:
+ *     summary: Increment view count for a recording
+ *     tags: [Recordings]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: View count updated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 viewCount: { type: integer }
+ */
+router.post('/:id/view', auth, incrementView);
 
 module.exports = router;

@@ -1,4 +1,6 @@
 const Class = require('../models/Class');
+const { notifyClass } = require('../utils/notificationService');
+const { parsePagination, paginationMeta } = require('../utils/pagination');
 
 // Generate unique Class ID like ESB-4829
 const generateClassId = () => {
@@ -40,6 +42,21 @@ exports.createClass = async (req, res) => {
       classId = generateClassId();
     }
 
+    const {
+      recurrenceType,
+      recurrenceDays,
+      recurrenceInterval,
+      recurrenceEndDate,
+    } = req.body;
+
+    // Derive repeatDaily from recurrenceType for backwards-compat
+    const resolvedRepeatDaily = repeatDaily || recurrenceType === 'daily';
+
+    // Validate weekly recurrence has at least one day
+    if (recurrenceType === 'weekly' && (!recurrenceDays || recurrenceDays.length === 0)) {
+      return res.status(400).json({ message: 'recurrenceDays is required for weekly recurrence' });
+    }
+
     const newClass = await Class.create({
       name,
       subject,
@@ -49,7 +66,11 @@ exports.createClass = async (req, res) => {
       startTime,
       endTime,
       duration,
-      repeatDaily: repeatDaily || false,
+      repeatDaily: resolvedRepeatDaily,
+      recurrenceType: recurrenceType || 'none',
+      recurrenceDays: recurrenceDays || [],
+      recurrenceInterval: recurrenceInterval || 1,
+      recurrenceEndDate: recurrenceEndDate ? new Date(recurrenceEndDate) : undefined,
       groupName,
       studentIds: studentIds || [],
       classId,
@@ -66,7 +87,8 @@ exports.createClass = async (req, res) => {
 exports.getMyClasses = async (req, res) => {
   try {
     const classes = await Class.find({ teacher: req.user._id })
-      .populate('students', 'name email');
+      .populate('students', 'name email')
+      .populate('studentIds', 'name email');
     res.json(classes);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -160,6 +182,14 @@ exports.startClass = async (req, res) => {
 
     cls.status = 'live';
     await cls.save();
+
+    notifyClass(
+      cls, 'class_started',
+      `${cls.name} is now live!`,
+      `Your class "${cls.name}" has started. Join now.`,
+      { classId: cls._id.toString() }
+    ).catch(() => {});
+
     res.json({ message: 'Class started', status: cls.status });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -193,15 +223,22 @@ exports.toggleRecording = async (req, res) => {
   }
 };
 
-// Get student's joined/invited classes
+// Get student's joined/invited classes (paginated)
 exports.getJoinedClasses = async (req, res) => {
   try {
-    const classes = await Class.find({
-      $or: [{ students: req.user._id }, { studentIds: req.user._id }],
-    })
-      .populate('teacher', 'name')
-      .sort({ scheduledAt: -1 });
-    res.json(classes);
+    const { page, limit, skip } = parsePagination(req.query);
+    const filter = { $or: [{ students: req.user._id }, { studentIds: req.user._id }] };
+
+    const [classes, total] = await Promise.all([
+      Class.find(filter)
+        .populate('teacher', 'name')
+        .sort({ scheduledAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Class.countDocuments(filter),
+    ]);
+
+    res.json({ data: classes, pagination: paginationMeta(page, limit, total) });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -232,14 +269,24 @@ exports.getLiveClassesCount = async (req, res) => {
   }
 };
 
-// Get all teacher's classes (created by this teacher)
+// Get all teacher's classes (paginated, filterable by status)
 exports.getTeacherClasses = async (req, res) => {
   try {
-    const classes = await Class.find({ teacher: req.user._id })
-      .populate('students', 'name email')
-      .populate('studentIds', 'name email')
-      .sort({ scheduledAt: -1 });
-    res.json(classes);
+    const { page, limit, skip } = parsePagination(req.query);
+    const filter = { teacher: req.user._id };
+    if (req.query.status) filter.status = req.query.status;
+
+    const [classes, total] = await Promise.all([
+      Class.find(filter)
+        .populate('students', 'name email')
+        .populate('studentIds', 'name email')
+        .sort({ scheduledAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Class.countDocuments(filter),
+    ]);
+
+    res.json({ data: classes, pagination: paginationMeta(page, limit, total) });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -273,6 +320,167 @@ exports.joinLiveClass = async (req, res) => {
     }
 
     res.json(cls);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ── Recurrence helpers ────────────────────────────────────────────────────────
+
+/**
+ * Generate upcoming occurrence dates for a class between `from` and `to`.
+ * Respects exceptions and reschedule overrides.
+ */
+const generateOccurrences = (cls, from, to) => {
+  if (cls.recurrenceType === 'none') {
+    const d = cls.scheduledAt;
+    if (d >= from && d <= to) return [{ date: d, rescheduled: false }];
+    return [];
+  }
+
+  const exceptions = new Set(
+    (cls.recurrenceExceptions || []).map((d) => d.toISOString().slice(0, 10))
+  );
+  const rescheduleMap = {};
+  (cls.recurrenceReschedules || []).forEach((r) => {
+    rescheduleMap[r.originalDate.toISOString().slice(0, 10)] = r.newDate;
+  });
+
+  const occurrences = [];
+  const end = cls.recurrenceEndDate ? new Date(Math.min(to, cls.recurrenceEndDate)) : to;
+  const cursor = new Date(cls.scheduledAt);
+
+  // Advance cursor to `from` window
+  while (cursor < from) {
+    advanceCursor(cursor, cls);
+  }
+
+  while (cursor <= end) {
+    const key = cursor.toISOString().slice(0, 10);
+    if (!exceptions.has(key)) {
+      const actualDate = rescheduleMap[key] ? new Date(rescheduleMap[key]) : new Date(cursor);
+      occurrences.push({ date: actualDate, originalDate: new Date(cursor), rescheduled: !!rescheduleMap[key] });
+    }
+    advanceCursor(cursor, cls);
+  }
+
+  return occurrences;
+};
+
+const advanceCursor = (cursor, cls) => {
+  if (cls.recurrenceType === 'daily') {
+    cursor.setDate(cursor.getDate() + 1);
+  } else if (cls.recurrenceType === 'weekly') {
+    // Move to next matching day-of-week
+    do {
+      cursor.setDate(cursor.getDate() + 1);
+    } while (!cls.recurrenceDays.includes(cursor.getDay()));
+  } else if (cls.recurrenceType === 'monthly') {
+    cursor.setMonth(cursor.getMonth() + 1);
+  } else if (cls.recurrenceType === 'custom') {
+    cursor.setDate(cursor.getDate() + (cls.recurrenceInterval || 1));
+  } else {
+    cursor.setFullYear(cursor.getFullYear() + 100); // stop iteration
+  }
+};
+
+// GET /api/classes/:id/occurrences?from=ISO&to=ISO
+exports.getOccurrences = async (req, res) => {
+  try {
+    const cls = await Class.findById(req.params.id);
+    if (!cls) return res.status(404).json({ message: 'Class not found' });
+
+    const from = req.query.from ? new Date(req.query.from) : new Date();
+    const to   = req.query.to   ? new Date(req.query.to)   : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+    const occurrences = generateOccurrences(cls, from, to);
+    res.json({ classId: cls._id, recurrenceType: cls.recurrenceType, occurrences });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// POST /api/classes/:id/exceptions  { date: "YYYY-MM-DD", reason?: string }
+exports.addException = async (req, res) => {
+  try {
+    const cls = await Class.findById(req.params.id);
+    if (!cls) return res.status(404).json({ message: 'Class not found' });
+
+    if (cls.teacher.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Only the class teacher can modify recurrence' });
+    }
+
+    const { date } = req.body;
+    if (!date) return res.status(400).json({ message: 'date is required (YYYY-MM-DD)' });
+
+    const exceptionDate = new Date(date);
+    const alreadyExists = cls.recurrenceExceptions.some(
+      (d) => d.toISOString().slice(0, 10) === exceptionDate.toISOString().slice(0, 10)
+    );
+    if (!alreadyExists) {
+      cls.recurrenceExceptions.push(exceptionDate);
+      await cls.save();
+    }
+
+    res.json({ message: 'Exception added', exceptions: cls.recurrenceExceptions });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// DELETE /api/classes/:id/exceptions  { date: "YYYY-MM-DD" }
+exports.removeException = async (req, res) => {
+  try {
+    const cls = await Class.findById(req.params.id);
+    if (!cls) return res.status(404).json({ message: 'Class not found' });
+
+    if (cls.teacher.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Only the class teacher can modify recurrence' });
+    }
+
+    const { date } = req.body;
+    if (!date) return res.status(400).json({ message: 'date is required (YYYY-MM-DD)' });
+
+    cls.recurrenceExceptions = cls.recurrenceExceptions.filter(
+      (d) => d.toISOString().slice(0, 10) !== date
+    );
+    await cls.save();
+
+    res.json({ message: 'Exception removed', exceptions: cls.recurrenceExceptions });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// POST /api/classes/:id/reschedule  { originalDate: "YYYY-MM-DD", newDate: ISO, reason?: string }
+exports.rescheduleInstance = async (req, res) => {
+  try {
+    const cls = await Class.findById(req.params.id);
+    if (!cls) return res.status(404).json({ message: 'Class not found' });
+
+    if (cls.teacher.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Only the class teacher can reschedule' });
+    }
+
+    const { originalDate, newDate, reason } = req.body;
+    if (!originalDate || !newDate) {
+      return res.status(400).json({ message: 'originalDate and newDate are required' });
+    }
+
+    const origKey = new Date(originalDate).toISOString().slice(0, 10);
+
+    // Remove existing reschedule for same original date (upsert)
+    cls.recurrenceReschedules = cls.recurrenceReschedules.filter(
+      (r) => r.originalDate.toISOString().slice(0, 10) !== origKey
+    );
+    cls.recurrenceReschedules.push({
+      originalDate: new Date(originalDate),
+      newDate: new Date(newDate),
+      reason: reason || '',
+    });
+    await cls.save();
+
+    res.json({ message: 'Instance rescheduled', reschedules: cls.recurrenceReschedules });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

@@ -9,6 +9,7 @@ const userSchema = new mongoose.Schema({
   subject:   { type: String },   // teacher only
   phone:     { type: String },
   avatar:    { type: String },
+  fcmToken:  { type: String },   // Firebase Cloud Messaging device token
 }, { timestamps: true });
 
 // Hash password before save

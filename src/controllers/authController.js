@@ -1,5 +1,6 @@
 const jwt  = require('jsonwebtoken');
 const User = require('../models/User');
+const { parsePagination, paginationMeta } = require('../utils/pagination');
 
 const getJwtSecret = () => {
   const secret = (process.env.JWT_SECRET || '').trim();
@@ -59,21 +60,32 @@ exports.getProfile = async (req, res) => {
   res.json(req.user);
 };
 
-// Get all students (teacher only)
+// Get all students (teacher only) — paginated + searchable
 exports.getAllStudents = async (req, res) => {
   try {
-    // Verify requester is a teacher
     if (req.user.role !== 'teacher') {
-      return res.status(403).json({
-        message: 'Only teachers can access student list',
-      });
+      return res.status(403).json({ message: 'Only teachers can access student list' });
     }
 
-    const students = await User.find({ role: 'student' })
-      .select('name email phone avatar subject createdAt')
-      .sort({ name: 1 });
+    const { page, limit, skip } = parsePagination(req.query);
+    const filter = { role: 'student' };
 
-    res.json(students);
+    // Optional full-text-style search on name or email
+    if (req.query.search) {
+      const re = new RegExp(req.query.search, 'i');
+      filter.$or = [{ name: re }, { email: re }];
+    }
+
+    const [students, total] = await Promise.all([
+      User.find(filter)
+        .select('name email phone avatar subject createdAt')
+        .sort({ name: 1 })
+        .skip(skip)
+        .limit(limit),
+      User.countDocuments(filter),
+    ]);
+
+    res.json({ data: students, pagination: paginationMeta(page, limit, total) });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

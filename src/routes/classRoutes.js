@@ -1,5 +1,7 @@
-const router = require('express').Router();
-const auth = require('../middleware/authMiddleware');
+const router      = require('express').Router();
+const auth        = require('../middleware/authMiddleware');
+const requireRole = require('../middleware/requireRole');
+const { cacheResponse } = require('../middleware/cacheMiddleware');
 const {
   createClass,
   getMyClasses,
@@ -13,6 +15,10 @@ const {
   getLiveClassesCount,
   getTeacherClasses,
   joinLiveClass,
+  getOccurrences,
+  addException,
+  removeException,
+  rescheduleInstance,
 } = require('../controllers/classController');
 
 /**
@@ -61,7 +67,7 @@ const {
  *       401:
  *         description: Unauthorized
  */
-router.post('/', auth, createClass);
+router.post('/', auth, requireRole('teacher'), createClass);
 
 /**
  * @swagger
@@ -152,7 +158,7 @@ router.post('/join', auth, joinClass);
  *               items:
  *                 $ref: '#/components/schemas/Class'
  */
-router.get('/live/list', auth, getLiveClasses);
+router.get('/live/list', auth, cacheResponse(15), getLiveClasses);
 
 /**
  * @swagger
@@ -172,7 +178,7 @@ router.get('/live/list', auth, getLiveClasses);
  *               properties:
  *                 liveClassesCount: { type: integer, example: 5 }
  */
-router.get('/live/count', auth, getLiveClassesCount);
+router.get('/live/count', auth, cacheResponse(30), getLiveClassesCount);
 
 /**
  * @swagger
@@ -223,7 +229,7 @@ router.post('/live/join', auth, joinLiveClass);
  *               items:
  *                 $ref: '#/components/schemas/Class'
  */
-router.get('/teacher/all', auth, getTeacherClasses);
+router.get('/teacher/all', auth, requireRole('teacher'), getTeacherClasses);
 
 /**
  * @swagger
@@ -277,7 +283,7 @@ router.get('/:id/status', auth, getClassStatus);
  *       404:
  *         description: Class not found
  */
-router.post('/:id/start', auth, startClass);
+router.post('/:id/start', auth, requireRole('teacher'), startClass);
 
 /**
  * @swagger
@@ -299,7 +305,7 @@ router.post('/:id/start', auth, startClass);
  *       404:
  *         description: Class not found
  */
-router.post('/:id/end', auth, endClass);
+router.post('/:id/end', auth, requireRole('teacher'), endClass);
 
 /**
  * @swagger
@@ -337,5 +343,113 @@ router.post('/:id/end', auth, endClass);
  *         description: Class not found
  */
 router.post('/:id/recording', auth, toggleRecording);
+
+/**
+ * @swagger
+ * /api/classes/{id}/occurrences:
+ *   get:
+ *     summary: Get upcoming occurrences of a recurring class
+ *     tags: [Classes]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *       - in: query
+ *         name: from
+ *         schema: { type: string, format: date-time }
+ *         description: Start of range (default now)
+ *       - in: query
+ *         name: to
+ *         schema: { type: string, format: date-time }
+ *         description: End of range (default now+30 days)
+ *     responses:
+ *       200:
+ *         description: List of occurrence dates with reschedule info
+ */
+router.get('/:id/occurrences', auth, getOccurrences);
+
+/**
+ * @swagger
+ * /api/classes/{id}/exceptions:
+ *   post:
+ *     summary: Skip (cancel) a specific occurrence of a recurring class
+ *     tags: [Classes]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [date]
+ *             properties:
+ *               date: { type: string, example: "2026-05-20" }
+ *     responses:
+ *       200:
+ *         description: Exception added
+ *   delete:
+ *     summary: Restore a previously cancelled occurrence
+ *     tags: [Classes]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [date]
+ *             properties:
+ *               date: { type: string, example: "2026-05-20" }
+ *     responses:
+ *       200:
+ *         description: Exception removed
+ */
+router.post('/:id/exceptions', auth, addException);
+router.delete('/:id/exceptions', auth, removeException);
+
+/**
+ * @swagger
+ * /api/classes/{id}/reschedule:
+ *   post:
+ *     summary: Move a specific occurrence to a new date/time
+ *     tags: [Classes]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [originalDate, newDate]
+ *             properties:
+ *               originalDate: { type: string, example: "2026-05-20" }
+ *               newDate:      { type: string, format: date-time, example: "2026-05-22T10:00:00Z" }
+ *               reason:       { type: string, example: "Public holiday" }
+ *     responses:
+ *       200:
+ *         description: Occurrence rescheduled
+ */
+router.post('/:id/reschedule', auth, rescheduleInstance);
 
 module.exports = router;

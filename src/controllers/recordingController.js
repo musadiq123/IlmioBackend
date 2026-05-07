@@ -707,3 +707,132 @@ exports.deleteRecording = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+// ─── PATCH /api/recordings/:id/chapters ──────────────────────────────────────
+// Teacher adds/replaces video chapters for navigation
+exports.updateChapters = async (req, res) => {
+  try {
+    const recording = await Recording.findById(req.params.id);
+    if (!recording) return res.status(404).json({ message: 'Recording not found' });
+
+    if (recording.teacherId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Only the teacher can edit chapters' });
+    }
+
+    const { chapters } = req.body;
+    if (!Array.isArray(chapters)) return res.status(400).json({ message: 'chapters must be an array' });
+
+    recording.chapters = chapters.map((c) => ({
+      title:       c.title,
+      startSec:    Number(c.startSec),
+      description: c.description || '',
+    }));
+    await recording.save();
+
+    res.json({ message: 'Chapters updated', chapters: recording.chapters });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── POST /api/recordings/:id/transcript/request ─────────────────────────────
+// Queue an AI transcript job (stub — integrate Whisper/Google STT here)
+exports.requestTranscript = async (req, res) => {
+  try {
+    const recording = await Recording.findById(req.params.id);
+    if (!recording) return res.status(404).json({ message: 'Recording not found' });
+
+    if (!['ready', 'completed'].includes(recording.status)) {
+      return res.status(409).json({ message: 'Recording must be ready before transcription' });
+    }
+
+    if (recording.transcript && recording.transcript.status === 'completed') {
+      return res.json({ message: 'Transcript already available', transcript: recording.transcript });
+    }
+
+    recording.transcript = {
+      ...recording.transcript,
+      status: 'processing',
+      language: req.body.language || 'en',
+      provider: req.body.provider || 'whisper',
+    };
+    await recording.save();
+
+    // TODO: enqueue async job — e.g. dispatch to a worker queue, call Whisper API
+    // For now we mark it as processing and return a jobId placeholder
+    console.log(`[Transcript] Job queued for recording ${recording._id} via ${recording.transcript.provider}`);
+
+    res.json({
+      message: 'Transcript generation queued',
+      status: 'processing',
+      recordingId: recording._id,
+      provider: recording.transcript.provider,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── PATCH /api/recordings/:id/transcript ────────────────────────────────────
+// Internal / webhook: write completed transcript (called by AI worker)
+exports.saveTranscript = async (req, res) => {
+  try {
+    const recording = await Recording.findById(req.params.id);
+    if (!recording) return res.status(404).json({ message: 'Recording not found' });
+
+    const { fullText, segments, language, provider } = req.body;
+
+    recording.transcript = {
+      fullText:    fullText || '',
+      segments:    segments || [],
+      language:    language || recording.transcript?.language || 'en',
+      provider:    provider || recording.transcript?.provider || 'whisper',
+      generatedAt: new Date(),
+      status:      'completed',
+    };
+    await recording.save();
+
+    res.json({ message: 'Transcript saved', transcript: recording.transcript });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── PATCH /api/recordings/:id/summary ───────────────────────────────────────
+// Save AI-generated summary / key points
+exports.saveSummary = async (req, res) => {
+  try {
+    const recording = await Recording.findById(req.params.id);
+    if (!recording) return res.status(404).json({ message: 'Recording not found' });
+
+    const { keyPoints, text } = req.body;
+
+    recording.summary = {
+      keyPoints:   Array.isArray(keyPoints) ? keyPoints : [],
+      text:        text || '',
+      generatedAt: new Date(),
+      status:      'completed',
+    };
+    await recording.save();
+
+    res.json({ message: 'Summary saved', summary: recording.summary });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── POST /api/recordings/:id/view ───────────────────────────────────────────
+// Increment view counter when a student watches the recording
+exports.incrementView = async (req, res) => {
+  try {
+    const recording = await Recording.findByIdAndUpdate(
+      req.params.id,
+      { $inc: { viewCount: 1 } },
+      { new: true }
+    );
+    if (!recording) return res.status(404).json({ message: 'Recording not found' });
+    res.json({ viewCount: recording.viewCount });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
